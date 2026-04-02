@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 import json, urllib.request
 import hmac, hashlib, base64
 from datetime import datetime, timezone
@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 app = Flask(__name__)
 OKX_BASE = "https://www.okx.com"
 
+import hmac, hashlib, base64
+from datetime import datetime, timezone
 
+OKX_BASE = "https://www.okx.com"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # OKX DATA
@@ -322,7 +325,8 @@ def detect_premium_discount(candles, cur_price):
         "discount_zone": round(discount_zone, 4),
         "position": position,
         "pct_position": pct_position,
-        "bias": "空方區域 — 尋找做空機會" if position=="PREMIUM" else "多方區域 — 尋找做多機會"
+        "bias_pd": "PREMIUM" if position=="PREMIUM" else "DISCOUNT",
+        "bias": "溢價區 (Premium) — 價格偏高，適合尋找做空" if position=="PREMIUM" else "折扣區 (Discount) — 價格偏低，適合尋找做多"
     }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -596,9 +600,559 @@ def analyze(symbol, api_key="", secret_key="", passphrase=""):
 # HTML 前端
 # ═══════════════════════════════════════════════════════════════════════════
 
+HTML = r"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICT/SMC 多時框分析 · OKX</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800;900&family=Instrument+Sans:wght@400;500;600&display=swap');
+:root{
+  --bg:#07090d;--bg2:#0b0f16;--bg3:#10151e;--bg4:#141b26;
+  --border:#1c2a3c;--border2:#243040;
+  --accent:#3b9eff;--green:#0dff8c;--red:#ff2d55;
+  --yellow:#ffcc00;--orange:#ff8c42;--purple:#a78bfa;--cyan:#22d3ee;
+  --text:#d4e4f4;--text2:#4a6a8a;--text3:#2a3a50;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:'Instrument Sans',sans-serif;min-height:100vh;}
+body::before{content:'';position:fixed;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.4;}
+
+/* scrollbar */
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--border2);}
+
+.app{max-width:1400px;margin:0 auto;padding:16px;}
+
+/* HEADER */
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 0 18px;border-bottom:1px solid var(--border);margin-bottom:18px;}
+.logo{font-family:'Syne',sans-serif;font-size:1.5rem;font-weight:900;letter-spacing:-1px;}
+.logo .l1{color:#fff;} .logo .l2{color:var(--accent);}
+.logo .sub{font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2);letter-spacing:3px;display:block;margin-top:2px;}
+.hdr-r{display:flex;align-items:center;gap:12px;}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);animation:blink 2s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.live{font-family:'Space Mono',monospace;font-size:.65rem;color:var(--green);letter-spacing:2px;}
+
+/* API BAR */
+.api-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);margin-bottom:14px;cursor:pointer;transition:border-color .2s;}
+.api-bar:hover{border-color:var(--orange);}
+.api-lbl{font-family:'Space Mono',monospace;font-size:.65rem;color:var(--text2);letter-spacing:2px;flex:1;}
+.api-st{font-family:'Space Mono',monospace;font-size:.65rem;}
+.api-st.ok{color:var(--green);} .api-st.no{color:var(--text2);}
+.api-drawer{background:var(--bg2);border:1px solid var(--border);border-top:none;padding:14px;display:none;margin-bottom:14px;}
+.api-drawer.open{display:block;}
+.api-note{font-family:'Space Mono',monospace;font-size:.63rem;color:var(--text2);line-height:1.8;padding:8px 12px;background:rgba(255,140,66,.05);border-left:2px solid var(--orange);margin-bottom:12px;}
+.api-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;}
+.api-f{display:flex;flex-direction:column;gap:4px;}
+.api-f label{font-family:'Space Mono',monospace;font-size:.58rem;color:var(--text2);letter-spacing:2px;}
+.inp{font-family:'Space Mono',monospace;font-size:.75rem;background:var(--bg3);border:1px solid var(--border);color:var(--accent);padding:8px 10px;outline:none;width:100%;transition:border-color .2s;}
+.inp:focus{border-color:var(--accent);}
+.inp::placeholder{color:var(--text3);}
+.api-acts{display:flex;gap:8px;}
+.btn{font-family:'Space Mono',monospace;font-size:.65rem;padding:6px 12px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;letter-spacing:1px;transition:all .2s;}
+.btn:hover{border-color:var(--accent);color:var(--accent);}
+.btn-o{border-color:var(--orange);color:var(--orange);}
+.btn-o:hover{background:rgba(255,140,66,.08);}
+.btn-r{border-color:var(--red);color:var(--red);}
+.btn-r:hover{background:rgba(255,45,85,.06);}
+
+/* SEARCH */
+.search{display:flex;gap:10px;margin-bottom:12px;}
+.s-inp{flex:1;font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:800;background:var(--bg2);border:1px solid var(--border);color:#fff;padding:14px 18px;outline:none;letter-spacing:3px;text-transform:uppercase;transition:border-color .2s,box-shadow .2s;}
+.s-inp:focus{border-color:var(--accent);box-shadow:0 0 30px rgba(59,158,255,.08);}
+.s-inp::placeholder{color:var(--text3);font-size:1rem;}
+.s-btn{font-family:'Syne',sans-serif;font-size:.9rem;font-weight:900;padding:14px 24px;background:var(--accent);color:var(--bg);border:none;cursor:pointer;letter-spacing:2px;transition:all .2s;}
+.s-btn:hover{background:#5aadff;box-shadow:0 0 30px rgba(59,158,255,.4);}
+.s-btn:disabled{background:var(--bg3);color:var(--text2);cursor:not-allowed;box-shadow:none;}
+.quick{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;}
+.qb{font-family:'Space Mono',monospace;font-size:.65rem;padding:4px 11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);cursor:pointer;transition:all .2s;letter-spacing:1px;}
+.qb:hover{border-color:var(--accent);color:var(--accent);}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(59,158,255,.2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:middle;}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* LAYOUT */
+.main-layout{display:grid;grid-template-columns:1fr 360px;gap:14px;margin-bottom:14px;}
+.left-col{display:flex;flex-direction:column;gap:14px;}
+.right-col{display:flex;flex-direction:column;gap:14px;}
+
+/* PANEL */
+.panel{background:var(--bg2);border:1px solid var(--border);overflow:hidden;}
+.panel-hd{padding:10px 14px;border-bottom:1px solid var(--border);font-family:'Space Mono',monospace;font-size:.62rem;color:var(--text2);letter-spacing:3px;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between;}
+.panel-hd::before{content:'';width:6px;height:6px;border:1.5px solid var(--accent);display:inline-block;margin-right:8px;flex-shrink:0;}
+.panel-body{padding:12px 14px;}
+
+/* TV CHART */
+.tv-wrap{height:580px;background:var(--bg2);border:1px solid var(--border);}
+.tv-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);}
+.tv-tab{font-family:'Space Mono',monospace;font-size:.63rem;padding:7px 14px;cursor:pointer;border-right:1px solid var(--border);color:var(--text2);transition:all .2s;letter-spacing:1px;}
+.tv-tab.on{color:var(--accent);background:rgba(59,158,255,.07);}
+.tv-tab:hover:not(.on){color:var(--text);background:rgba(255,255,255,.02);}
+.tv-frame{height:538px;}
+
+/* SIGNAL HERO */
+.signal-hero{display:grid;grid-template-columns:auto 1fr;gap:0;border:1px solid var(--border);overflow:hidden;}
+.sig-left{padding:22px 24px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg3);border-right:1px solid var(--border);min-width:160px;}
+.sig-word{font-family:'Syne',sans-serif;font-size:2.6rem;font-weight:900;line-height:1;letter-spacing:-1px;}
+.LONG .sig-word{color:var(--green);text-shadow:0 0 40px rgba(13,255,140,.4);}
+.SHORT .sig-word{color:var(--red);text-shadow:0 0 40px rgba(255,45,85,.4);}
+.WAIT .sig-word{color:var(--yellow);text-shadow:0 0 30px rgba(255,204,0,.3);}
+.sig-strat{font-family:'Space Mono',monospace;font-size:.6rem;margin-top:6px;text-align:center;}
+.LONG .sig-strat{color:var(--green);}.SHORT .sig-strat{color:var(--red);}.WAIT .sig-strat{color:var(--yellow);}
+.conf-wrap{margin-top:12px;text-align:center;}
+.conf-num{font-family:'Syne',sans-serif;font-size:1.8rem;font-weight:900;}
+.conf-lbl{font-family:'Space Mono',monospace;font-size:.55rem;color:var(--text2);letter-spacing:2px;}
+.sig-right{padding:16px 18px;background:var(--bg2);}
+.sig-inst{font-family:'Syne',sans-serif;font-size:1rem;font-weight:800;color:#fff;letter-spacing:2px;margin-bottom:12px;}
+.prices{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border);}
+.ps{display:flex;flex-direction:column;}
+.ps-l{font-family:'Space Mono',monospace;font-size:.55rem;color:var(--text2);letter-spacing:2px;margin-bottom:2px;}
+.ps-v{font-family:'Space Mono',monospace;font-size:.88rem;font-weight:700;}
+.step-list{display:flex;flex-direction:column;gap:6px;}
+.step{display:flex;align-items:flex-start;gap:8px;font-size:.82rem;}
+.step-n{font-family:'Space Mono',monospace;font-size:.6rem;color:var(--accent);background:rgba(59,158,255,.1);padding:2px 6px;border-radius:2px;flex-shrink:0;margin-top:1px;}
+
+/* TF MATRIX */
+.tf-matrix{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+.tf-cell{background:var(--bg3);border:1px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;align-items:center;gap:4px;transition:border-color .2s;}
+.tf-cell.BULL{border-color:rgba(13,255,140,.3);background:rgba(13,255,140,.04);}
+.tf-cell.BEAR{border-color:rgba(255,45,85,.3);background:rgba(255,45,85,.04);}
+.tf-label{font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2);letter-spacing:2px;}
+.tf-dir{font-family:'Syne',sans-serif;font-size:.9rem;font-weight:900;}
+.tf-rsi{font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2);}
+.tf-ms{font-family:'Space Mono',monospace;font-size:.55rem;text-align:center;}
+
+/* OB/FVG/LIQ items */
+.zone-item{padding:9px 12px;border-left:3px solid;margin-bottom:6px;background:var(--bg3);}
+.zone-item:last-child{margin-bottom:0;}
+.zone-item.BULL_OB{border-color:var(--green);}
+.zone-item.BEAR_OB{border-color:var(--red);}
+.zone-item.BULL_FVG{border-color:var(--cyan);}
+.zone-item.BEAR_FVG{border-color:var(--orange);}
+.zone-item.BSL{border-color:var(--yellow);}
+.zone-item.SSL{border-color:var(--purple);}
+.zone-label{font-family:'Space Mono',monospace;font-size:.6rem;letter-spacing:1px;margin-bottom:4px;}
+.zone-price{font-family:'Space Mono',monospace;font-size:.85rem;font-weight:700;}
+.zone-meta{font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2);margin-top:2px;}
+.str-dots{display:flex;gap:2px;margin-top:4px;}
+.sd{width:5px;height:5px;border-radius:1px;background:var(--border);}
+.sd.on{background:var(--accent);}
+
+/* ENTRY */
+.entry-cells{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);}
+.ec{background:var(--bg3);padding:11px 13px;}
+.ec-l{font-family:'Space Mono',monospace;font-size:.55rem;color:var(--text2);letter-spacing:2px;margin-bottom:3px;}
+.ec-v{font-family:'Space Mono',monospace;font-size:.9rem;font-weight:700;}
+
+/* PD */
+.pd-bar-wrap{margin:8px 0;overflow:hidden;border-radius:3px;}
+.pd-premium{position:absolute;right:0;top:0;bottom:0;background:rgba(255,45,85,.15);}
+.pd-discount{position:absolute;left:0;top:0;bottom:0;background:rgba(13,255,140,.15);}
+.pd-eq{position:absolute;top:0;bottom:0;width:2px;background:var(--yellow);}
+.pd-cur{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 6px #fff;}
+.pd-label{font-family:'Space Mono',monospace;font-size:.6rem;text-align:center;margin-top:4px;}
+
+/* STRUCTURE */
+.ms-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(28,42,60,.5);font-size:.82rem;}
+.ms-item:last-child{border-bottom:none;}
+.ms-tag{font-family:'Space Mono',monospace;font-size:.6rem;padding:2px 7px;border-radius:2px;flex-shrink:0;letter-spacing:1px;}
+.ms-tag.BOS{background:rgba(59,158,255,.15);color:var(--accent);}
+.ms-tag.CHoCH{background:rgba(255,204,0,.15);color:var(--yellow);}
+.ms-tag.MSS{background:rgba(167,139,250,.15);color:var(--purple);}
+.ms-price{font-family:'Space Mono',monospace;font-size:.82rem;font-weight:700;flex:1;}
+.ms-desc{font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2);}
+
+/* ORDERBOOK */
+.ob-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.ob-lbl{font-family:'Space Mono',monospace;font-size:.6rem;width:36px;}
+.ob-bg{flex:1;height:7px;background:var(--bg3);border-radius:4px;overflow:hidden;}
+.ob-fill{height:100%;border-radius:4px;}
+.ob-val{font-family:'Space Mono',monospace;font-size:.62rem;width:55px;text-align:right;}
+
+/* ACCT */
+.acct-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);}
+.ac{background:var(--bg3);padding:11px 14px;}
+.ac-l{font-family:'Space Mono',monospace;font-size:.55rem;color:var(--text2);letter-spacing:2px;margin-bottom:3px;}
+.ac-v{font-family:'Space Mono',monospace;font-size:.88rem;font-weight:700;}
+
+/* PLACEHOLDER */
+.ph{text-align:center;padding:60px 24px;border:1px dashed var(--border);}
+.ph-t{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;color:var(--text2);letter-spacing:2px;margin-bottom:8px;}
+.ph-s{font-family:'Space Mono',monospace;font-size:.68rem;color:var(--text3);line-height:2;}
+.err{padding:12px 16px;background:rgba(255,45,85,.06);border:1px solid rgba(255,45,85,.2);color:var(--red);font-family:'Space Mono',monospace;font-size:.72rem;line-height:1.7;}
+.disc{padding:10px 14px;background:rgba(255,204,0,.03);border:1px solid rgba(255,204,0,.1);font-family:'Space Mono',monospace;font-size:.6rem;color:rgba(255,204,0,.45);line-height:1.7;margin-top:14px;}
+
+@media(max-width:900px){.main-layout{grid-template-columns:1fr;}.api-row{grid-template-columns:1fr;}.tf-matrix{grid-template-columns:repeat(3,1fr);}}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="logo">
+    <span class="l1">ICT</span><span class="l2">X</span>
+    <span class="sub">SMC 多時框分析引擎 · OKX LIVE</span>
+  </div>
+  <div class="hdr-r"><div class="dot"></div><span class="live">5-TF ANALYSIS</span></div>
+</div>
+
+<!-- API KEY -->
+<div class="api-bar" onclick="toggleApi()">
+  <span>🔑</span>
+  <span class="api-lbl">OKX API KEY（選填 — 查看帳號餘額與持倉）</span>
+  <span class="api-st no" id="apiSt">未設定</span>
+  <span style="font-family:'Space Mono',monospace;font-size:.65rem;color:var(--text2);margin-left:8px" id="apiArr">▼</span>
+</div>
+<div class="api-drawer" id="apiDrawer">
+  <div class="api-note">⚠ 只需勾選「讀取」權限。🔒 Key 只存在瀏覽器 localStorage。<br>📍 OKX → 頭像 → API → 建立 V5 API Key</div>
+  <div class="api-row">
+    <div class="api-f"><label>API KEY</label><input class="inp" id="iK" type="password" placeholder="your-api-key"></div>
+    <div class="api-f"><label>SECRET KEY</label><input class="inp" id="iS" type="password" placeholder="your-secret-key"></div>
+    <div class="api-f"><label>PASSPHRASE</label><input class="inp" id="iP" type="password" placeholder="your-passphrase"></div>
+  </div>
+  <div class="api-acts">
+    <button class="btn btn-o" onclick="saveKeys()">✓ 儲存</button>
+    <button class="btn btn-r" onclick="clearKeys()">✕ 清除</button>
+    <button class="btn" onclick="toggleShow()">👁 顯示</button>
+  </div>
+</div>
+
+<!-- SEARCH -->
+<div class="search">
+  <input class="s-inp" id="coinIn" placeholder="輸入幣種 BTC · ETH · SOL ..." onkeydown="if(event.key==='Enter')go()">
+  <button class="s-btn" id="goBtn" onclick="go()">分析</button>
+</div>
+<div class="quick">
+  <span style="font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2);line-height:26px;margin-right:4px">快速：</span>
+  <button class="qb" onclick="q('BTC')">BTC</button>
+  <button class="qb" onclick="q('ETH')">ETH</button>
+  <button class="qb" onclick="q('SOL')">SOL</button>
+  <button class="qb" onclick="q('BNB')">BNB</button>
+  <button class="qb" onclick="q('DOGE')">DOGE</button>
+  <button class="qb" onclick="q('XRP')">XRP</button>
+  <button class="qb" onclick="q('AVAX')">AVAX</button>
+  <button class="qb" onclick="q('LINK')">LINK</button>
+</div>
+
+<div id="acctSec"></div>
+
+<!-- MAIN RESULT -->
+<div id="result">
+  <div class="ph">
+    <div style="font-size:2.5rem;margin-bottom:14px;opacity:.25">📊</div>
+    <div class="ph-t">輸入幣種開始 ICT/SMC 分析</div>
+    <div class="ph-s">
+      週線 → 日線 → 4H → 1H → 15m 五層縮小<br>
+      自動偵測：訂單塊 OB · FVG 失衡區 · 流動性 SSL/BSL<br>
+      市場結構 BOS/CHoCH/MSS · Premium/Discount 區間<br>
+      TradingView 即時 K 線 + Python 精確標注
+    </div>
+  </div>
+</div>
+
+<div class="disc">⚠ 僅供技術分析學習參考，不構成投資建議。加密貨幣交易具高度風險，請自行評估。</div>
+</div>
+
+<script>
+let apiOpen=false, showP=false, curInst='BTC-USDT', curTF='60';
+
+// ── API Key ────────────────────────────────────────────────
+function toggleApi(){apiOpen=!apiOpen;document.getElementById('apiDrawer').className='api-drawer'+(apiOpen?' open':'');document.getElementById('apiArr').textContent=apiOpen?'▲':'▼';}
+function saveKeys(){const k=document.getElementById('iK').value.trim(),s=document.getElementById('iS').value.trim(),p=document.getElementById('iP').value.trim();if(!k||!s||!p){alert('請填入全部三個欄位');return;}localStorage.setItem('ox_k',k);localStorage.setItem('ox_s',s);localStorage.setItem('ox_p',p);setSt(true);apiOpen=false;document.getElementById('apiDrawer').className='api-drawer';document.getElementById('apiArr').textContent='▼';}
+function clearKeys(){if(!confirm('確定清除？'))return;['ox_k','ox_s','ox_p'].forEach(k=>localStorage.removeItem(k));['iK','iS','iP'].forEach(id=>document.getElementById(id).value='');setSt(false);document.getElementById('acctSec').innerHTML='';}
+function toggleShow(){showP=!showP;['iK','iS','iP'].forEach(id=>document.getElementById(id).type=showP?'text':'password');}
+function setSt(ok){const el=document.getElementById('apiSt');el.textContent=ok?'✅ 已設定':'未設定';el.className='api-st '+(ok?'ok':'no');}
+function loadKeys(){const k=localStorage.getItem('ox_k'),s=localStorage.getItem('ox_s'),p=localStorage.getItem('ox_p');if(k&&s&&p){document.getElementById('iK').value=k;document.getElementById('iS').value=s;document.getElementById('iP').value=p;setSt(true);}}
+function getKeys(){return{api_key:localStorage.getItem('ox_k')||'',secret_key:localStorage.getItem('ox_s')||'',passphrase:localStorage.getItem('ox_p')||''};}
+
+// ── SCAN ───────────────────────────────────────────────────
+function q(c){document.getElementById('coinIn').value=c;go();}
+async function go(){
+  const coin=document.getElementById('coinIn').value.trim();
+  if(!coin){alert('請輸入幣種');return;}
+  const btn=document.getElementById('goBtn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';
+  document.getElementById('result').innerHTML=`<div style="padding:40px;text-align:center;border:1px solid var(--border);"><span class="spinner" style="width:18px;height:18px;border-width:3px;"></span><span style="font-family:'Space Mono',monospace;font-size:.75rem;color:var(--text2);margin-left:12px;letter-spacing:2px">分析 ${coin.toUpperCase()} 五個時間框架中...</span></div>`;
+  try{
+    const res=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:coin,...getKeys()})});
+    if(!res.ok)throw new Error(await res.text());
+    const d=await res.json();
+    if(d.error)throw new Error(d.error);
+    curInst=d.inst;
+    renderAcct(d.account,d.inst);
+    renderAll(d);
+  }catch(e){document.getElementById('result').innerHTML=`<div class="err">❌ ${e.message}</div>`;}
+  btn.disabled=false;btn.innerHTML='分析';
+}
+
+// ── HELPERS ────────────────────────────────────────────────
+function fmt(n){if(n==null)return'--';const s=Math.abs(n);if(s>=10000)return'$'+n.toLocaleString('en-US',{maximumFractionDigits:0});if(s>=1)return'$'+n.toFixed(4);return'$'+n.toFixed(6);}
+function fmtN(n,d=4){if(n==null)return'--';const s=Math.abs(n);if(s>=10000)return n.toLocaleString('en-US',{maximumFractionDigits:0});if(s>=1)return n.toFixed(d);return n.toFixed(6);}
+
+// ── TV CHART ───────────────────────────────────────────────
+function buildTV(inst, interval){
+  const okxSym = 'OKX:'+inst.replace('-','');
+  const src = 'https://s.tradingview.com/widgetembed/?frameElementId=tv_chart&symbol='+okxSym+'&interval='+interval+'&theme=dark&style=1&locale=zh_TW&timezone=Asia%2FTaipei&hide_side_toolbar=0&studies=RSI%40tv-basicstudies%2CMACD%40tv-basicstudies%2CVolume%40tv-basicstudies&backgroundColor=%230b0f16&gridColor=rgba(28%2C42%2C60%2C0.6)&upColor=%230dff8c&downColor=%23ff2d55';
+  return `<iframe src="${src}" style="width:100%;height:100%;border:none;display:block;" allowfullscreen></iframe>`;
+}
+
+function switchTF(tf, interval){
+  curTF=interval;
+  document.querySelectorAll('.tv-tab').forEach(t=>t.classList.remove('on'));
+  document.getElementById('tab-'+tf).classList.add('on');
+  document.getElementById('tvFrame').innerHTML = buildTV(curInst, interval);
+}
+
+// ── RENDER ACCOUNT ─────────────────────────────────────────
+function renderAcct(a,inst){
+  const sec=document.getElementById('acctSec');
+  if(!a){sec.innerHTML='';return;}
+  if(!a.ok){sec.innerHTML=`<div class="err" style="margin-bottom:14px">⚠ API 錯誤：${a.error}</div>`;return;}
+  const pos=a.pos||[];
+  sec.innerHTML=`<div class="panel" style="margin-bottom:14px;">
+    <div class="panel-hd">帳號資產 <span style="color:var(--green)">✓ 已連線</span></div>
+    <div class="acct-grid">
+      <div class="ac"><div class="ac-l">USDT 可用</div><div class="ac-v" style="color:var(--accent)">${a.usdt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="ac"><div class="ac-l">${a.base_ccy} 可用</div><div class="ac-v" style="color:var(--yellow)">${fmtN(a.base,6)}</div></div>
+      <div class="ac"><div class="ac-l">總資產 USDT</div><div class="ac-v">${a.eq.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+    </div>
+    ${pos.length===0?'<div style="padding:10px 14px;font-family:\'Space Mono\',monospace;font-size:.68rem;color:var(--text2)">無合約持倉</div>':pos.map(p=>`<div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap;">
+      <div class="ps"><div class="ps-l">方向</div><div class="ps-v" style="color:${p.side==='long'?'var(--green)':'var(--red)'}">${p.side.toUpperCase()}</div></div>
+      <div class="ps"><div class="ps-l">數量</div><div class="ps-v">${p.size}張</div></div>
+      <div class="ps"><div class="ps-l">開倉價</div><div class="ps-v">${fmt(p.entry)}</div></div>
+      <div class="ps"><div class="ps-l">強平價</div><div class="ps-v" style="color:var(--red)">${p.liq?fmt(p.liq):'--'}</div></div>
+      <div class="ps"><div class="ps-l">盈虧</div><div class="ps-v" style="color:${p.pnl>=0?'var(--green)':'var(--red)'}">${p.pnl>=0?'+':''}${p.pnl.toFixed(2)} (${p.pnl_pct.toFixed(2)}%)</div></div>
+      <div class="ps"><div class="ps-l">槓桿</div><div class="ps-v">${p.lev}x</div></div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── MAIN RENDER ────────────────────────────────────────────
+function renderAll(d){
+  const plan=d.plan||{}; const sig=plan.signal||'WAIT';
+  const sc=sig==='LONG'?'var(--green)':sig==='SHORT'?'var(--red)':'var(--yellow)';
+  const conf=plan.confidence||0;
+  const confColor=conf>=65?'var(--green)':conf>=50?'var(--yellow)':'var(--red)';
+  const chg=d.chg24||0;
+  const tfs=d.tf_analyses||[];
+  const ob_d=d.orderbook||{};
+
+  // Collect all OB/FVG/Liq from 1H for right panel
+  const h1=tfs.find(t=>t.tf==='1H')||{};
+  const m15=tfs.find(t=>t.tf==='15m')||{};
+  const allOB=[...(h1.order_blocks||[]),...(m15.order_blocks||[])].slice(0,5);
+  const allFVG=[...(h1.fvg||[]),...(m15.fvg||[])].slice(0,5);
+  const allLiq=[...(h1.liquidity||[])].slice(0,6);
+  const ms1h=h1.structure||{};
+  const pd1h=h1.premium_discount||null;
+  const rr=plan.rr1; const minRR=plan.min_rr||1.5; const rrc=rr>=2?'var(--green)':rr>=1.5?'var(--yellow)':'var(--red)';
+
+  document.getElementById('result').innerHTML=`
+  <!-- SIGNAL HERO -->
+  <div class="signal-hero ${sig}" style="margin-bottom:14px;">
+    <div class="sig-left">
+      <div style="font-family:'Space Mono',monospace;font-size:.55rem;color:var(--text2);letter-spacing:3px;margin-bottom:8px">ICT 信號</div>
+      <div class="sig-word">${sig}</div>
+      <div class="sig-strat">${plan.strategy||'--'}</div>
+      <div class="conf-wrap">
+        <div class="conf-num" style="color:${confColor}">${conf}%</div>
+        <div class="conf-lbl">5-TF 信心度</div>
+      </div>
+    </div>
+    <div class="sig-right">
+      <div class="sig-inst">${d.inst} <span style="font-size:.7rem;color:var(--text2);font-family:'Space Mono',monospace">${d.ts}</span></div>
+      <div class="prices">
+        <div class="ps"><span class="ps-l">即時價格</span><span class="ps-v" style="color:#fff;font-size:1rem">${fmt(d.price)}</span></div>
+        <div class="ps"><span class="ps-l">24H 漲跌</span><span class="ps-v" style="color:${chg>=0?'var(--green)':'var(--red)'}">${chg>=0?'+':''}${chg.toFixed(2)}%</span></div>
+        <div class="ps"><span class="ps-l">24H 高</span><span class="ps-v" style="color:var(--green)">${fmt(d.high24)}</span></div>
+        <div class="ps"><span class="ps-l">24H 低</span><span class="ps-v" style="color:var(--red)">${fmt(d.low24)}</span></div>
+        <div class="ps"><span class="ps-l">成交量</span><span class="ps-v">${d.vol24}</span></div>
+      </div>
+      <div class="step-list">
+        ${(plan.reason_steps||['等待更多確認...']).map((s,i)=>`<div class="step"><span class="step-n">0${i+1}</span><span>${s}</span></div>`).join('')}
+      </div>
+    </div>
+  </div>
+
+  <!-- TF MATRIX -->
+  <div class="panel" style="margin-bottom:14px;">
+    <div class="panel-hd">多時間框架方向矩陣 — 週→日→4H→1H→15m</div>
+    <div class="panel-body">
+      <div class="tf-matrix">
+        ${tfs.map(t=>{
+          if(t.error) return `<div class="tf-cell"><span class="tf-label">${t.tf}</span><span style="color:var(--red);font-size:.6rem">ERR</span></div>`;
+          const ms=t.structure||{}; const msText=ms.bos?'BOS':ms.choch?'CHoCH':ms.trend||'--';
+          const c=t.bias==='BULL'?'var(--green)':t.bias==='BEAR'?'var(--red)':'var(--yellow)';
+          return `<div class="tf-cell ${t.bias}">
+            <span class="tf-label">${t.tf}</span>
+            <span class="tf-dir" style="color:${c}">${t.bias||'?'}</span>
+            <span class="tf-rsi">RSI ${t.rsi||'--'}</span>
+            <span class="tf-ms" style="color:${c};opacity:.7">${msText}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>
+
+  <div class="main-layout">
+    <div class="left-col">
+
+      <!-- TV CHART -->
+      <div class="tv-wrap">
+        <div class="tv-tabs">
+          <div class="tv-tab" id="tab-1W" onclick="switchTF('1W','W')">週線</div>
+          <div class="tv-tab" id="tab-1D" onclick="switchTF('1D','D')">日線</div>
+          <div class="tv-tab" id="tab-4H" onclick="switchTF('4H','240')">4H</div>
+          <div class="tv-tab on" id="tab-1H" onclick="switchTF('1H','60')">1H</div>
+          <div class="tv-tab" id="tab-15m" onclick="switchTF('15m','15')">15m</div>
+        </div>
+        <div class="tv-frame" id="tvFrame">${buildTV(d.inst,'60')}</div>
+      </div>
+
+      <!-- MARKET STRUCTURE 1H -->
+      <div class="panel">
+        <div class="panel-hd">市場結構 (1H) — BOS · CHoCH · MSS</div>
+        <div class="panel-body">
+          ${ms1h.trend?`<div style="margin-bottom:10px;"><span style="font-family:'Space Mono',monospace;font-size:.65rem;color:var(--text2)">當前趨勢：</span><span style="font-family:'Syne',sans-serif;font-size:.9rem;font-weight:800;color:${ms1h.trend==='BULL'?'var(--green)':'var(--red)'}">${ms1h.trend}</span></div>`:''}
+          ${ms1h.bos?`<div class="ms-item"><span class="ms-tag BOS">BOS</span><span class="ms-price" style="color:var(--accent)">${fmt(ms1h.bos.level)}</span><span class="ms-desc">${ms1h.bos.desc}</span></div>`:''}
+          ${ms1h.choch?`<div class="ms-item"><span class="ms-tag CHoCH">CHoCH</span><span class="ms-price" style="color:var(--yellow)">${fmt(ms1h.choch.level)}</span><span class="ms-desc">${ms1h.choch.desc}</span></div>`:''}
+          ${ms1h.mss?`<div class="ms-item"><span class="ms-tag MSS">MSS</span><span class="ms-price" style="color:var(--purple)">${fmt(ms1h.mss.level)}</span><span class="ms-desc">${ms1h.mss.desc}</span></div>`:''}
+          ${!ms1h.bos&&!ms1h.choch&&!ms1h.mss?`<div style="font-family:'Space Mono',monospace;font-size:.7rem;color:var(--text2)">無明確結構轉換訊號</div>`:''}
+          <!-- Recent Swings -->
+          ${ms1h.swings&&ms1h.swings.length?`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+            <div style="font-family:'Space Mono',monospace;font-size:.58rem;color:var(--text2);letter-spacing:2px;margin-bottom:6px">近期擺動點</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${ms1h.swings.map(s=>`<span style="font-family:'Space Mono',monospace;font-size:.65rem;padding:3px 8px;background:${s.type==='SH'?'rgba(255,45,85,.1)':'rgba(13,255,140,.1)'};color:${s.type==='SH'?'var(--red)':'var(--green)'};border-radius:2px">${s.type} ${fmtN(s.price)}</span>`).join('')}
+            </div>
+          </div>`:''}
+        </div>
+      </div>
+
+      <!-- PREMIUM / DISCOUNT -->
+      ${pd1h?`<div class="panel">
+        <div class="panel-hd">Premium / Discount 區間 (1H)</div>
+        <div class="panel-body">
+          <!-- 正確方向：左=低價=Discount(多方)  右=高價=Premium(空方) -->
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+            <span style="font-family:'Space Mono',monospace;font-size:.62rem;color:var(--green)">🟢 Discount 折扣區 ${fmt(pd1h.discount_zone)}</span>
+            <span style="font-family:'Space Mono',monospace;font-size:.62rem;color:var(--yellow)">⚖ Eq ${fmt(pd1h.equilibrium)}</span>
+            <span style="font-family:'Space Mono',monospace;font-size:.62rem;color:var(--red)">🔴 Premium 溢價區 ${fmt(pd1h.premium_zone)}</span>
+          </div>
+          <div class="pd-bar-wrap" style="position:relative;height:36px;background:linear-gradient(to right,rgba(13,255,140,.12) 0%,rgba(13,255,140,.06) 25%,rgba(28,42,60,.3) 45%,rgba(28,42,60,.3) 55%,rgba(255,45,85,.06) 75%,rgba(255,45,85,.14) 100%);border:1px solid var(--border);">
+            <div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--yellow);opacity:.8;"></div>
+            <div style="position:absolute;left:${Math.min(95,Math.max(5,pd1h.pct_position))}%;top:50%;transform:translate(-50%,-50%);width:12px;height:12px;background:#fff;border-radius:50%;box-shadow:0 0 8px #fff;"></div>
+            <div style="position:absolute;left:2%;top:50%;transform:translateY(-50%);font-family:'Space Mono',monospace;font-size:.55rem;color:var(--green);opacity:.7;">LOW</div>
+            <div style="position:absolute;right:2%;top:50%;transform:translateY(-50%);font-family:'Space Mono',monospace;font-size:.55rem;color:var(--red);opacity:.7;">HIGH</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:5px;font-family:'Space Mono',monospace;font-size:.6rem;color:var(--text2)">
+            <span>前低 ${fmt(pd1h.range_low)}</span>
+            <span style="color:${pd1h.position==='DISCOUNT'?'var(--green)':'var(--red)'};font-size:.68rem;font-weight:700">當前 ${pd1h.pct_position}% — ${pd1h.bias}</span>
+            <span>前高 ${fmt(pd1h.range_high)}</span>
+          </div>
+        </div>
+      </div>`:''}
+
+      <!-- ENTRY PLAN -->
+      <div class="panel">
+        <div class="panel-hd">進場計劃 — ICT 三取點法</div>
+        <div class="entry-cells">
+          <div class="ec"><div class="ec-l">進場位</div><div class="ec-v" style="color:var(--accent)">${fmt(plan.entry)}</div></div>
+          <div class="ec"><div class="ec-l">止損 SL</div><div class="ec-v" style="color:var(--red)">${fmt(plan.sl)}</div></div>
+          <div class="ec"><div class="ec-l">止盈 TP1</div><div class="ec-v" style="color:var(--green)">${fmt(plan.tp1)}</div></div>
+          <div class="ec"><div class="ec-l">止盈 TP2</div><div class="ec-v" style="color:var(--green)">${fmt(plan.tp2)}</div></div>
+          <div class="ec"><div class="ec-l">止盈 TP3 (最終)</div><div class="ec-v" style="color:var(--green)">${fmt(plan.tp3)}</div></div>
+          <div class="ec" style="grid-column:1/3"><div class="ec-l">R:R 比值 <span style='color:var(--text2)'>(最低門檻 1:${minRR})</span></div><div class="ec-v" style="color:${rrc}">${rr?'1 : '+rr+(rr>=2?' ✅ 優秀':rr>=1.5?' ✅ 達標':' ❌ 不足'):'條件未達標 — 等待更好進場點'}</div></div>
+        </div>
+      </div>
+
+    </div><!-- left-col -->
+
+    <div class="right-col">
+
+      <!-- ORDER BLOCKS -->
+      <div class="panel">
+        <div class="panel-hd">訂單塊 OB (1H + 15m)</div>
+        <div class="panel-body">
+          ${allOB.length===0?`<div style="font-family:'Space Mono',monospace;font-size:.68rem;color:var(--text2)">未偵測到有效訂單塊</div>`:
+          allOB.map(o=>`<div class="zone-item ${o.type}">
+            <div class="zone-label" style="color:${o.type==='BULL_OB'?'var(--green)':'var(--red)'}">${o.label}</div>
+            <div class="zone-price" style="color:${o.type==='BULL_OB'?'var(--green)':'var(--red)'}">${fmt(o.high)} — ${fmt(o.low)}</div>
+            <div class="zone-meta">中點 ${fmt(o.mid)} · 距離 ${o.dist_pct}%</div>
+            <div class="str-dots">${Array(5).fill(0).map((_,j)=>`<div class="sd ${j<o.strength?'on':''}"></div>`).join('')}</div>
+          </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- FVG -->
+      <div class="panel">
+        <div class="panel-hd">FVG 失衡區 (1H + 15m)</div>
+        <div class="panel-body">
+          ${allFVG.length===0?`<div style="font-family:'Space Mono',monospace;font-size:.68rem;color:var(--text2)">未偵測到未填滿 FVG</div>`:
+          allFVG.map(f=>`<div class="zone-item ${f.type}">
+            <div class="zone-label" style="color:${f.type==='BULL_FVG'?'var(--cyan)':'var(--orange)'}">${f.label}</div>
+            <div class="zone-price" style="color:${f.type==='BULL_FVG'?'var(--cyan)':'var(--orange)'}">${fmt(f.high)} — ${fmt(f.low)}</div>
+            <div class="zone-meta">缺口 ${f.size_pct}% · 距離 ${f.dist_pct}%</div>
+          </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- LIQUIDITY -->
+      <div class="panel">
+        <div class="panel-hd">流動性獵取點 SSL / BSL (1H)</div>
+        <div class="panel-body">
+          ${allLiq.length===0?`<div style="font-family:'Space Mono',monospace;font-size:.68rem;color:var(--text2)">無明顯流動性聚集點</div>`:
+          allLiq.map(l=>`<div class="zone-item ${l.type}">
+            <div class="zone-label" style="color:${l.type==='BSL'?'var(--yellow)':'var(--purple)'}">${l.type} · ${l.type==='BSL'?'買方流動性 (前高)':'賣方流動性 (前低)'}</div>
+            <div class="zone-price" style="color:${l.type==='BSL'?'var(--yellow)':'var(--purple)'}">${fmt(l.price)}</div>
+            <div class="zone-meta">${l.action} · 距離 ${l.dist_pct}% · 測試 ${l.tests} 次</div>
+            <div class="str-dots">${Array(5).fill(0).map((_,j)=>`<div class="sd ${j<l.strength?'on':''}"></div>`).join('')}</div>
+          </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- ORDERBOOK -->
+      ${ob_d.ratio!=null?`<div class="panel">
+        <div class="panel-hd">訂單簿流動性</div>
+        <div class="panel-body">
+          <div class="ob-bar-row">
+            <span class="ob-lbl" style="color:var(--green)">買量</span>
+            <div class="ob-bg"><div class="ob-fill" style="width:${Math.min(100,ob_d.ratio/(ob_d.ratio+1)*150)}%;background:var(--green)"></div></div>
+            <span class="ob-val" style="color:var(--green)">${fmtN(ob_d.bid_vol,0)}</span>
+          </div>
+          <div class="ob-bar-row">
+            <span class="ob-lbl" style="color:var(--red)">賣量</span>
+            <div class="ob-bg"><div class="ob-fill" style="width:${Math.min(100,(1-ob_d.ratio/(ob_d.ratio+1))*150)}%;background:var(--red)"></div></div>
+            <span class="ob-val" style="color:var(--red)">${fmtN(ob_d.ask_vol,0)}</span>
+          </div>
+          <div style="margin-top:10px;font-family:'Space Mono',monospace;font-size:.65rem;">
+            <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">
+              <span style="color:var(--text2)">買/賣比</span><span style="color:${ob_d.ratio>1.2?'var(--green)':ob_d.ratio<0.8?'var(--red)':'var(--text)'}">${ob_d.ratio} · ${ob_d.pressure}</span></div>
+            <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">
+              <span style="color:var(--text2)">買單牆</span><span style="color:var(--green)">${fmt(ob_d.bid_wall[0])} · ${fmtN(ob_d.bid_wall[1],0)}</span></div>
+            <div style="display:flex;justify-content:space-between;padding:5px 0;">
+              <span style="color:var(--text2)">賣單牆</span><span style="color:var(--red)">${fmt(ob_d.ask_wall[0])} · ${fmtN(ob_d.ask_wall[1],0)}</span></div>
+          </div>
+        </div>
+      </div>`:''}
+
+    </div><!-- right-col -->
+  </div>`;
+
+  // TV loaded via iframe
+}
+
+loadKeys();
+document.getElementById('coinIn').focus();
+</script>
+</body>
+</html>"""
+
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    return HTML
 
 @app.route('/analyze', methods=['POST'])
 def analyze_route():
