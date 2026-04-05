@@ -1,27 +1,14 @@
-#!/usr/bin/env python3
-"""
-ICT/SMC 終極分析引擎 v3.0
-全部功能：
-  ✅ 確認K線偵測（吞噬、錘子、強勢收盤）
-  ✅ Displacement 推動波強度確認
-  ✅ 多時框 OB/FVG 重疊 Confluence
-  ✅ Inducement 誘多/誘空偵測
-  ✅ Kill Zone 時間過濾（倫敦/紐約）
-  ✅ 回測引擎（過去90天勝率/R:R統計）
-  ✅ 交易日誌（自動記錄/複盤）
-  ✅ Telegram 推播通知（選填）
-  ✅ 5層時間框架分析
-  ✅ OB/FVG/SSL/BSL/BOS/CHoCH/MSS
-  ✅ Premium/Discount 區間
+from flask import Flask, request, jsonify
+import json, urllib.request
+import hmac, hashlib, base64
+from datetime import datetime, timezone
 
-執行：cd ~/Downloads && python3 snr_server.py
-開啟：http://localhost:8888
-"""
+app = Flask(__name__)
+OKX_BASE = "https://www.okx.com"
 
 import http.server, json, urllib.request, urllib.error
 import hmac, hashlib, base64, os, time, sqlite3, threading
 from datetime import datetime, timezone, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 OKX_BASE = "https://www.okx.com"
 DB_PATH  = os.path.join(os.path.dirname(__file__), "trade_journal.db")
@@ -182,13 +169,6 @@ def macd(closes):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_kill_zone():
-    """
-    ICT Kill Zones（UTC 時間）
-    亞洲盤    00:00 - 04:00 UTC
-    倫敦開盤  07:00 - 10:00 UTC  ← 最重要
-    紐約開盤  12:00 - 15:00 UTC  ← 最重要
-    紐約尾盤  19:00 - 21:00 UTC
-    """
     now_utc = datetime.now(timezone.utc)
     h = now_utc.hour
     if   7  <= h < 10: return {"zone":"倫敦開盤 🇬🇧", "active":True,  "quality":"最佳",  "color":"green"}
@@ -224,15 +204,6 @@ def find_swings(candles, left=3, right=3):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def detect_displacement(candles, lookback=5):
-    """
-    Displacement = 強勢推動波
-    條件：
-    1. 連續 2-3 根同向K線
-    2. 每根實體 > 平均實體 1.5x
-    3. 影線極短（實體佔K線 > 70%）
-    4. 成交量放大
-    返回：{"bull":bool, "bear":bool, "strength":1-5, "desc":str}
-    """
     if len(candles) < lookback + 3:
         return {"bull":False,"bear":False,"strength":0,"desc":"數據不足"}
 
@@ -272,22 +243,6 @@ def detect_displacement(candles, lookback=5):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def detect_confirmation_candle(candles, direction, zone_high, zone_low):
-    """
-    等待確認K線（ICT 進場觸發條件）
-    方向 = LONG 或 SHORT
-    zone = OB 或 FVG 的區間
-
-    多頭確認K線（價格在支撐區時）：
-      - 看漲吞噬（陽線實體完全覆蓋前根陰線）
-      - 錘子線（下影線 > 實體 2x，收在上半部）
-      - 強勢陽線（實體 > 平均 1.5x，收盤 > 區間 50%）
-      - Pin Bar（下影線極長）
-
-    空頭確認K線（價格在壓力區時）：
-      - 看跌吞噬
-      - 射擊之星（上影線 > 實體 2x，收在下半部）
-      - 強勢陰線
-    """
     if len(candles) < 3:
         return {"confirmed":False,"type":"無","desc":"等待確認K線"}
 
@@ -359,13 +314,6 @@ def detect_confirmation_candle(candles, direction, zone_high, zone_low):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def detect_inducement(candles, cur_price, swing_highs, swing_lows):
-    """
-    Inducement = 誘多/誘空（假突破）
-    特徵：
-    - 假突破前高/前低，但收盤反向
-    - 通常用來獵取散戶止損，然後反向運行
-    - 假突破後的反向K線是很強的進場信號
-    """
     inductions = []
     n = len(candles)
     if n < 5: return []
@@ -669,10 +617,6 @@ def detect_pd(candles, cur_price):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def check_ob_confluence(tf_analyses, direction):
-    """
-    檢查多個時間框架的 OB 是否在同一個價格區間重疊
-    重疊越多，信號越強
-    """
     all_obs = []
     for tf in tf_analyses:
         for ob in tf.get("order_blocks",[]):
@@ -703,10 +647,6 @@ def check_ob_confluence(tf_analyses, direction):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_backtest(inst, candles_1h):
-    """
-    簡化回測：掃描過去K線，模擬每次 OB/FVG 信號的結果
-    統計：勝率、平均 R:R、最大連敗、盈虧因子
-    """
     results = []
     n = len(candles_1h)
     if n < 60: return {"error": "數據不足"}
@@ -1898,103 +1838,25 @@ document.getElementById('coinIn').focus();
 </body>
 </html>"""
 
-# ═══════════════════════════════════════════════════════════════════════════
-# HTTP SERVER
-# ═══════════════════════════════════════════════════════════════════════════
+@app.route('/')
+def index():
+    return HTML
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args): pass
-
-    def do_GET(self):
-        if self.path == '/kill_zone':
-            kz = get_kill_zone()
-            self.send_response(200)
-            self.send_header('Content-Type','application/json; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(json.dumps(kz).encode())
-            return
-        if self.path.startswith('/journal'):
-            from urllib.parse import urlparse, parse_qs
-            qs = parse_qs(urlparse(self.path).query)
-            inst = qs.get('inst',[''])[0]
-            rows = get_journal(inst, 20)
-            self.send_response(200)
-            self.send_header('Content-Type','application/json; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(json.dumps(rows, ensure_ascii=False).encode())
-            return
-        self.send_response(200)
-        self.send_header('Content-Type','text/html; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(HTML.encode('utf-8'))
-
-    def do_POST(self):
-        ln = int(self.headers.get('Content-Length',0))
-        body = json.loads(self.rfile.read(ln).decode()) if ln else {}
-
-        if self.path == '/test_tg':
-            ok = send_telegram(body.get('token',''), body.get('chat_id',''),
-                               '✅ ICT/SMC 分析引擎連線測試成功！')
-            resp = json.dumps({"ok":ok}).encode()
-            self.send_response(200)
-            self.send_header('Content-Type','application/json')
-            self.end_headers()
-            self.wfile.write(resp)
-            return
-
-        if self.path == '/analyze':
-            try:
-                result = analyze(
-                    symbol     = body.get('symbol','BTC'),
-                    api_key    = body.get('api_key',''),
-                    secret_key = body.get('secret_key',''),
-                    passphrase = body.get('passphrase',''),
-                    run_bt     = body.get('run_backtest', False),
-                    tg_token   = body.get('tg_token',''),
-                    tg_chat    = body.get('tg_chat',''),
-                )
-                resp = json.dumps(result, ensure_ascii=False).encode('utf-8')
-                self.send_response(200)
-                self.send_header('Content-Type','application/json; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(resp)
-            except Exception as e:
-                resp = json.dumps({'error':str(e)}, ensure_ascii=False).encode()
-                self.send_response(500)
-                self.send_header('Content-Type','application/json')
-                self.end_headers()
-                self.wfile.write(resp)
-            return
-
-        self.send_response(404); self.end_headers()
+@app.route('/analyze', methods=['POST'])
+def analyze_route():
+    try:
+        body = request.get_json() or {}
+        result = analyze(
+            symbol=body.get('symbol', 'BTC'),
+            api_key=body.get('api_key', ''),
+            secret_key=body.get('secret_key', ''),
+            passphrase=body.get('passphrase', ''),
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    import os
     port = int(os.environ.get('PORT', 8888))
-    host = '0.0.0.0'
-    print()
-    print("=" * 60)
-    print("  🚀  ICT/SMC 終極分析引擎 v3.0")
-    print("=" * 60)
-    print()
-    print(f"  ✅  http://localhost:{port}")
-    print()
-    print("  新增功能：")
-    print("    ✅ 確認K線偵測（吞噬/錘子/Pin Bar）")
-    print("    ✅ Displacement 推動波強度")
-    print("    ✅ OB Confluence 多時框重疊")
-    print("    ✅ Inducement 誘多/誘空偵測")
-    print("    ✅ Kill Zone 時間過濾")
-    print("    ✅ 回測引擎（勝率/R:R/盈虧因子）")
-    print("    ✅ 交易日誌（自動記錄/複盤）")
-    print("    ✅ Telegram 推播通知")
-    print()
-    print("  → Chrome 開啟 http://localhost:8888")
-    print("  → 按 Ctrl+C 停止")
-    print()
-    print("=" * 60)
-    print()
-    server = HTTPServer((host, port), Handler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n  已停止。")
+    app.run(host='0.0.0.0', port=port)
